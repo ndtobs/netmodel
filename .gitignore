@@ -1,0 +1,16 @@
+# Binaries
+netmodel
+*.exe
+
+# Output files
+network-model/
+*.yaml
+!examples/*.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store

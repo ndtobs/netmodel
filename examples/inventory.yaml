@@ -1,0 +1,22 @@
+# Example inventory file for netmodel
+#
+# Groups can reference other groups with @ prefix
+# Defaults apply to all devices unless overridden
+
+groups:
+  spine:
+    - clab-lab-spine1:6030
+    - clab-lab-spine2:6030
+
+  leaf:
+    - clab-lab-leaf1:6030
+    - clab-lab-leaf2:6030
+
+  all:
+    - "@spine"
+    - "@leaf"
+
+defaults:
+  username: admin
+  password: admin
+  insecure: true
