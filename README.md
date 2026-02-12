@@ -60,7 +60,9 @@ network-model/
 │   ├── metadata.yaml
 │   ├── interfaces.yaml
 │   ├── bgp.yaml
-│   └── system.yaml
+│   ├── ospf.yaml
+│   ├── system.yaml
+│   └── routing_policy.yaml
 └── leaf1/
     └── ...
 ```
@@ -76,7 +78,9 @@ network-model/
     │   ├── metadata.yaml
     │   ├── interfaces.yaml
     │   ├── bgp.yaml
-    │   └── system.yaml
+    │   ├── ospf.yaml
+    │   ├── system.yaml
+    │   └── routing_policy.yaml
     └── leaf1/
         └── ...
 ```
@@ -126,9 +130,11 @@ system:
 
 | Feature | Description |
 |---------|-------------|
-| `interfaces` | Interface configuration (description, enabled, MTU, IP addresses) |
-| `bgp` | BGP global config, peer groups, and neighbors |
-| `system` | Hostname, domain, NTP, DNS |
+| `interfaces` | Interface configuration (description, enabled, MTU, IP addresses, ethernet, LAG) |
+| `bgp` | BGP global config, peer groups, neighbors (AFI/SAFI, timers, policies) |
+| `ospf` | OSPF areas, interfaces, network types, timers |
+| `system` | Hostname, domain, NTP, DNS, AAA/users, logging/syslog |
+| `routing_policy` | Prefix-sets, community-sets, as-path-sets, policy-definitions |
 
 List available features:
 
@@ -199,10 +205,10 @@ Variables from `host_vars/<hostname>/` are automatically loaded by Ansible.
 
 ## Roadmap
 
-- [x] v0.1: Core export functionality
+- [x] v0.1: Core export functionality (interfaces, bgp, ospf, system, routing_policy)
 - [ ] v0.2: Config deduplication (extract common config to group_vars)
 - [ ] v0.3: Diff command (compare live vs model)
-- [ ] v0.4: Additional features (OSPF, VLANs, LLDP)
+- [ ] v0.4: Additional features (VLANs, LLDP)
 
 ## Related Tools
 

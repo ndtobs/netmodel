@@ -8,6 +8,7 @@ type DeviceModel struct {
 	Metadata      Metadata              `yaml:"metadata,omitempty"`
 	Interfaces    map[string]*Interface `yaml:"interfaces,omitempty"`
 	BGP           *BGP                  `yaml:"bgp,omitempty"`
+	OSPF          *OSPF                 `yaml:"ospf,omitempty"`
 	System        *System               `yaml:"system,omitempty"`
 	RoutingPolicy *RoutingPolicy        `yaml:"routing_policy,omitempty"`
 }
@@ -198,6 +199,38 @@ type LogServer struct {
 	Port     int    `yaml:"port,omitempty"`
 	Protocol string `yaml:"protocol,omitempty"` // UDP, TCP
 	Facility string `yaml:"facility,omitempty"`
+}
+
+// ============================================================================
+// OSPF
+// ============================================================================
+
+// OSPF represents OSPF configuration
+type OSPF struct {
+	Global *OSPFGlobal        `yaml:"global,omitempty"`
+	Areas  map[string]*OSPFArea `yaml:"areas,omitempty"`
+}
+
+// OSPFGlobal represents global OSPF configuration
+type OSPFGlobal struct {
+	RouterID string `yaml:"router_id,omitempty"`
+}
+
+// OSPFArea represents an OSPF area
+type OSPFArea struct {
+	Identifier string                   `yaml:"identifier,omitempty"`
+	Type       string                   `yaml:"type,omitempty"` // NORMAL, STUB, NSSA
+	Interfaces map[string]*OSPFInterface `yaml:"interfaces,omitempty"`
+}
+
+// OSPFInterface represents an interface in OSPF
+type OSPFInterface struct {
+	NetworkType string `yaml:"network_type,omitempty"` // BROADCAST, POINT_TO_POINT, etc.
+	Passive     *bool  `yaml:"passive,omitempty"`
+	Cost        int    `yaml:"cost,omitempty"`
+	Priority    int    `yaml:"priority,omitempty"`
+	HelloInterval int  `yaml:"hello_interval,omitempty"`
+	DeadInterval  int  `yaml:"dead_interval,omitempty"`
 }
 
 // ============================================================================
