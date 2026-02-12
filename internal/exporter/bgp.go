@@ -307,6 +307,7 @@ func parseAfiSafis(afiSafis map[string]interface{}) []model.BGPAfiSafi {
 		}
 
 		afiSafi := model.BGPAfiSafi{}
+		enabled := false
 
 		// Get AFI name
 		if name, ok := afiData["afi-safi-name"].(string); ok {
@@ -316,19 +317,20 @@ func parseAfiSafis(afiSafis map[string]interface{}) []model.BGPAfiSafi {
 		// Check if active/enabled from state (config doesn't always have enabled)
 		if state, ok := afiData["state"].(map[string]interface{}); ok {
 			if active, ok := state["active"].(bool); ok {
-				afiSafi.Enabled = &active
+				enabled = active
 			}
 		}
 
-		// Get config if present
+		// Get config if present (overrides state)
 		if config, ok := afiData["config"].(map[string]interface{}); ok {
-			if enabled, ok := config["enabled"].(bool); ok {
-				afiSafi.Enabled = &enabled
+			if e, ok := config["enabled"].(bool); ok {
+				enabled = e
 			}
 		}
 
-		// Only include if we have a name and it's a common AFI
-		if afiSafi.Name != "" && isCommonAfi(afiSafi.Name) {
+		// Only include enabled AFI-SAFIs
+		if afiSafi.Name != "" && isCommonAfi(afiSafi.Name) && enabled {
+			// Don't include enabled field in output since they're all enabled
 			result = append(result, afiSafi)
 		}
 	}
