@@ -23,35 +23,43 @@ func (e *BGPExporter) Export(ctx context.Context, client *gnmi.Client) error {
 		Neighbors:  make(map[string]*model.BGPNeighbor),
 	}
 
-	// Get BGP global config
-	// Path: /network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=BGP]/bgp/global/config
-	globalData, err := client.GetJSON(ctx, "/network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=BGP]/bgp/global")
-	if err == nil && globalData != nil {
-		e.parseGlobal(globalData)
+	// Get full BGP config in one query
+	bgpData, err := client.GetJSON(ctx, "/network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=BGP]/bgp")
+	if err != nil {
+		return err
 	}
 
-	// Get peer groups
-	peerGroupData, err := client.GetJSON(ctx, "/network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=BGP]/bgp/peer-groups")
-	if err == nil && peerGroupData != nil {
-		e.parsePeerGroups(peerGroupData)
+	if bgpData == nil {
+		return nil
 	}
 
-	// Get neighbors
-	neighborsData, err := client.GetJSON(ctx, "/network-instances/network-instance[name=default]/protocols/protocol[identifier=BGP][name=BGP]/bgp/neighbors")
-	if err == nil && neighborsData != nil {
-		e.parseNeighbors(neighborsData)
+	// Parse global
+	if global, ok := bgpData["openconfig-network-instance:global"].(map[string]interface{}); ok {
+		e.parseGlobal(global)
+	} else if global, ok := bgpData["global"].(map[string]interface{}); ok {
+		e.parseGlobal(global)
+	}
+
+	// Parse peer groups
+	if peerGroups, ok := bgpData["openconfig-network-instance:peer-groups"].(map[string]interface{}); ok {
+		e.parsePeerGroups(peerGroups)
+	} else if peerGroups, ok := bgpData["peer-groups"].(map[string]interface{}); ok {
+		e.parsePeerGroups(peerGroups)
+	}
+
+	// Parse neighbors
+	if neighbors, ok := bgpData["openconfig-network-instance:neighbors"].(map[string]interface{}); ok {
+		e.parseNeighbors(neighbors)
+	} else if neighbors, ok := bgpData["neighbors"].(map[string]interface{}); ok {
+		e.parseNeighbors(neighbors)
 	}
 
 	return nil
 }
 
 func (e *BGPExporter) parseGlobal(data map[string]interface{}) {
-	// Handle namespaced keys
 	config := data
 	if cfg, ok := data["config"].(map[string]interface{}); ok {
-		config = cfg
-	}
-	if cfg, ok := data["openconfig-network-instance:config"].(map[string]interface{}); ok {
 		config = cfg
 	}
 
@@ -65,12 +73,9 @@ func (e *BGPExporter) parseGlobal(data map[string]interface{}) {
 }
 
 func (e *BGPExporter) parsePeerGroups(data map[string]interface{}) {
-	// Handle different response structures
 	var peerGroupList []interface{}
 
-	if pgs, ok := data["openconfig-network-instance:peer-group"].([]interface{}); ok {
-		peerGroupList = pgs
-	} else if pgs, ok := data["peer-group"].([]interface{}); ok {
+	if pgs, ok := data["peer-group"].([]interface{}); ok {
 		peerGroupList = pgs
 	}
 
@@ -100,6 +105,51 @@ func (e *BGPExporter) parsePeerGroups(data map[string]interface{}) {
 			peerGroup.PeerAS = uint32(peerAS)
 		}
 
+		if localAS, ok := config["local-as"].(float64); ok {
+			peerGroup.LocalAS = uint32(localAS)
+		}
+
+		if peerType, ok := config["peer-type"].(string); ok {
+			peerGroup.PeerType = stripNamespace(peerType)
+		}
+
+		// Parse timers
+		if timers, ok := pgData["timers"].(map[string]interface{}); ok {
+			peerGroup.Timers = parseTimers(timers)
+		}
+
+		// Parse AFI-SAFI
+		if afiSafis, ok := pgData["afi-safis"].(map[string]interface{}); ok {
+			peerGroup.AFI = parseAfiSafis(afiSafis)
+		}
+
+		// Parse transport for update-source
+		if transport, ok := pgData["transport"].(map[string]interface{}); ok {
+			if tConfig, ok := transport["config"].(map[string]interface{}); ok {
+				if updateSource, ok := tConfig["local-address"].(string); ok {
+					peerGroup.UpdateSource = updateSource
+				}
+			}
+		}
+
+		// Parse ebgp-multihop
+		if multihop, ok := pgData["ebgp-multihop"].(map[string]interface{}); ok {
+			if mConfig, ok := multihop["config"].(map[string]interface{}); ok {
+				if ttl, ok := mConfig["multihop-ttl"].(float64); ok && ttl > 0 {
+					peerGroup.EBGPMultihop = int(ttl)
+				}
+			}
+		}
+
+		// Route reflector client
+		if rrConfig, ok := pgData["route-reflector"].(map[string]interface{}); ok {
+			if cfg, ok := rrConfig["config"].(map[string]interface{}); ok {
+				if rrClient, ok := cfg["route-reflector-client"].(bool); ok && rrClient {
+					peerGroup.RouteReflector = &rrClient
+				}
+			}
+		}
+
 		e.bgp.PeerGroups[name] = peerGroup
 	}
 }
@@ -107,9 +157,7 @@ func (e *BGPExporter) parsePeerGroups(data map[string]interface{}) {
 func (e *BGPExporter) parseNeighbors(data map[string]interface{}) {
 	var neighborList []interface{}
 
-	if nbrs, ok := data["openconfig-network-instance:neighbor"].([]interface{}); ok {
-		neighborList = nbrs
-	} else if nbrs, ok := data["neighbor"].([]interface{}); ok {
+	if nbrs, ok := data["neighbor"].([]interface{}); ok {
 		neighborList = nbrs
 	}
 
@@ -144,23 +192,169 @@ func (e *BGPExporter) parseNeighbors(data map[string]interface{}) {
 		}
 
 		if peerGroup, ok := config["peer-group"].(string); ok {
-			// Strip namespace prefix if present
-			if idx := strings.LastIndex(peerGroup, ":"); idx != -1 {
-				peerGroup = peerGroup[idx+1:]
-			}
-			neighbor.PeerGroup = peerGroup
+			neighbor.PeerGroup = stripNamespace(peerGroup)
 		}
 
 		if localAS, ok := config["local-as"].(float64); ok {
 			neighbor.LocalAS = uint32(localAS)
 		}
 
+		if peerType, ok := config["peer-type"].(string); ok {
+			neighbor.PeerType = stripNamespace(peerType)
+		}
+
+		if sendComm, ok := config["send-community"].(string); ok {
+			neighbor.SendCommunity = stripNamespace(sendComm)
+		}
+
+		// Parse timers
+		if timers, ok := nbrData["timers"].(map[string]interface{}); ok {
+			neighbor.Timers = parseTimers(timers)
+		}
+
+		// Parse AFI-SAFI
+		if afiSafis, ok := nbrData["afi-safis"].(map[string]interface{}); ok {
+			neighbor.AFI = parseAfiSafis(afiSafis)
+		}
+
+		// Parse transport for update-source
+		if transport, ok := nbrData["transport"].(map[string]interface{}); ok {
+			if tConfig, ok := transport["config"].(map[string]interface{}); ok {
+				if updateSource, ok := tConfig["local-address"].(string); ok {
+					neighbor.UpdateSource = updateSource
+				}
+			}
+		}
+
+		// Parse ebgp-multihop
+		if multihop, ok := nbrData["ebgp-multihop"].(map[string]interface{}); ok {
+			if mConfig, ok := multihop["config"].(map[string]interface{}); ok {
+				if ttl, ok := mConfig["multihop-ttl"].(float64); ok && ttl > 0 {
+					neighbor.EBGPMultihop = int(ttl)
+				}
+			}
+		}
+
+		// Parse apply-policy for import/export
+		if applyPolicy, ok := nbrData["apply-policy"].(map[string]interface{}); ok {
+			if pConfig, ok := applyPolicy["config"].(map[string]interface{}); ok {
+				if importPolicy, ok := pConfig["import-policy"].([]interface{}); ok && len(importPolicy) > 0 {
+					if p, ok := importPolicy[0].(string); ok {
+						neighbor.ImportPolicy = p
+					}
+				}
+				if exportPolicy, ok := pConfig["export-policy"].([]interface{}); ok && len(exportPolicy) > 0 {
+					if p, ok := exportPolicy[0].(string); ok {
+						neighbor.ExportPolicy = p
+					}
+				}
+			}
+		}
+
+		// Route reflector client
+		if rrConfig, ok := nbrData["route-reflector"].(map[string]interface{}); ok {
+			if cfg, ok := rrConfig["config"].(map[string]interface{}); ok {
+				if rrClient, ok := cfg["route-reflector-client"].(bool); ok && rrClient {
+					neighbor.RouteReflector = &rrClient
+				}
+			}
+		}
+
 		e.bgp.Neighbors[neighborAddr] = neighbor
 	}
 }
 
+func parseTimers(timers map[string]interface{}) *model.BGPTimers {
+	config, ok := timers["config"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	t := &model.BGPTimers{}
+
+	if hold, ok := config["hold-time"].(float64); ok && hold > 0 {
+		t.HoldTime = int(hold)
+	}
+
+	if keepalive, ok := config["keepalive-interval"].(float64); ok && keepalive > 0 {
+		t.KeepaliveTime = int(keepalive)
+	}
+
+	if connect, ok := config["connect-retry"].(float64); ok && connect > 0 {
+		t.ConnectRetry = int(connect)
+	}
+
+	// Only return if we got something
+	if t.HoldTime == 0 && t.KeepaliveTime == 0 && t.ConnectRetry == 0 {
+		return nil
+	}
+
+	return t
+}
+
+func parseAfiSafis(afiSafis map[string]interface{}) []model.BGPAfiSafi {
+	var result []model.BGPAfiSafi
+
+	afiList, ok := afiSafis["afi-safi"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	for _, afi := range afiList {
+		afiData, ok := afi.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		afiSafi := model.BGPAfiSafi{}
+
+		// Get AFI name
+		if name, ok := afiData["afi-safi-name"].(string); ok {
+			afiSafi.Name = stripNamespace(name)
+		}
+
+		// Check if active/enabled from state (config doesn't always have enabled)
+		if state, ok := afiData["state"].(map[string]interface{}); ok {
+			if active, ok := state["active"].(bool); ok {
+				afiSafi.Enabled = &active
+			}
+		}
+
+		// Get config if present
+		if config, ok := afiData["config"].(map[string]interface{}); ok {
+			if enabled, ok := config["enabled"].(bool); ok {
+				afiSafi.Enabled = &enabled
+			}
+		}
+
+		// Only include if we have a name and it's a common AFI
+		if afiSafi.Name != "" && isCommonAfi(afiSafi.Name) {
+			result = append(result, afiSafi)
+		}
+	}
+
+	return result
+}
+
+func isCommonAfi(name string) bool {
+	common := map[string]bool{
+		"IPV4_UNICAST":   true,
+		"IPV6_UNICAST":   true,
+		"L2VPN_EVPN":     true,
+		"IPV4_MULTICAST": true,
+		"IPV6_MULTICAST": true,
+	}
+	return common[name]
+}
+
+func stripNamespace(s string) string {
+	if idx := strings.LastIndex(s, ":"); idx != -1 {
+		return s[idx+1:]
+	}
+	return s
+}
+
 func (e *BGPExporter) Apply(m *model.DeviceModel) {
-	// Only set BGP if we got meaningful data
 	if e.bgp.Global.AS > 0 || len(e.bgp.Neighbors) > 0 || len(e.bgp.PeerGroups) > 0 {
 		m.BGP = e.bgp
 	}

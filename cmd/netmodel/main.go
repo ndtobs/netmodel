@@ -340,6 +340,13 @@ func writeToDirectory(models map[string]*model.DeviceModel, dir string, split bo
 				}
 			}
 
+			// Write routing policy
+			if dm.RoutingPolicy != nil {
+				if err := writeFeatureFile(deviceDir, "routing_policy", map[string]interface{}{"routing_policy": dm.RoutingPolicy}); err != nil {
+					return err
+				}
+			}
+
 			fmt.Fprintf(os.Stderr, "Wrote %s/\n", deviceDir)
 		} else {
 			// Single file per device
@@ -410,6 +417,13 @@ func writeAnsibleStructure(models map[string]*model.DeviceModel, dir string, spl
 			// Write system
 			if dm.System != nil {
 				if err := writeFeatureFile(deviceDir, "system", map[string]interface{}{"system": dm.System}); err != nil {
+					return err
+				}
+			}
+
+			// Write routing policy
+			if dm.RoutingPolicy != nil {
+				if err := writeFeatureFile(deviceDir, "routing_policy", map[string]interface{}{"routing_policy": dm.RoutingPolicy}); err != nil {
 					return err
 				}
 			}

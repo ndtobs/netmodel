@@ -20,7 +20,7 @@ func (e *InterfacesExporter) Name() string {
 func (e *InterfacesExporter) Export(ctx context.Context, client *gnmi.Client) error {
 	e.interfaces = make(map[string]*model.Interface)
 
-	// Get all interfaces - Arista returns at /interfaces
+	// Get all interfaces
 	data, err := client.GetJSON(ctx, "/interfaces")
 	if err != nil {
 		return err
@@ -30,14 +30,12 @@ func (e *InterfacesExporter) Export(ctx context.Context, client *gnmi.Client) er
 		return nil
 	}
 
-	// Parse the interface list
 	e.parseInterfaces(data)
 
 	return nil
 }
 
 func (e *InterfacesExporter) parseInterfaces(data map[string]interface{}) {
-	// Arista returns: {"openconfig-interfaces:interface": [...]}
 	var interfaceList []interface{}
 
 	if ifaces, ok := data["openconfig-interfaces:interface"].([]interface{}); ok {
@@ -52,7 +50,6 @@ func (e *InterfacesExporter) parseInterfaces(data map[string]interface{}) {
 			continue
 		}
 
-		// Get interface name
 		name, _ := ifaceData["name"].(string)
 		if name == "" {
 			continue
@@ -65,16 +62,40 @@ func (e *InterfacesExporter) parseInterfaces(data map[string]interface{}) {
 			e.parseConfig(iface, config)
 		}
 
+		// Parse ethernet-specific config
+		if eth, ok := ifaceData["openconfig-if-ethernet:ethernet"].(map[string]interface{}); ok {
+			e.parseEthernet(iface, eth)
+		} else if eth, ok := ifaceData["ethernet"].(map[string]interface{}); ok {
+			e.parseEthernet(iface, eth)
+		}
+
+		// Parse aggregation (LAG) config
+		if agg, ok := ifaceData["openconfig-if-aggregate:aggregation"].(map[string]interface{}); ok {
+			e.parseAggregation(iface, agg)
+		} else if agg, ok := ifaceData["aggregation"].(map[string]interface{}); ok {
+			e.parseAggregation(iface, agg)
+		}
+
 		// Parse subinterfaces for IP addresses
 		if subints, ok := ifaceData["subinterfaces"].(map[string]interface{}); ok {
 			e.parseSubinterfaces(iface, subints)
 		}
 
 		// Only add if there's meaningful config
-		if iface.Description != "" || iface.Enabled != nil || iface.MTU > 0 || iface.IPv4 != nil || iface.IPv6 != nil {
+		if e.hasMeaningfulConfig(iface) {
 			e.interfaces[name] = iface
 		}
 	}
+}
+
+func (e *InterfacesExporter) hasMeaningfulConfig(iface *model.Interface) bool {
+	return iface.Description != "" ||
+		iface.Enabled != nil ||
+		iface.MTU > 0 ||
+		iface.IPv4 != nil ||
+		iface.IPv6 != nil ||
+		iface.Ethernet != nil ||
+		iface.LAG != nil
 }
 
 func (e *InterfacesExporter) parseConfig(iface *model.Interface, config map[string]interface{}) {
@@ -91,16 +112,84 @@ func (e *InterfacesExporter) parseConfig(iface *model.Interface, config map[stri
 	}
 
 	if ifType, ok := config["type"].(string); ok {
-		// Strip namespace prefix (iana-if-type:ethernetCsmacd -> ethernetCsmacd)
-		if idx := strings.LastIndex(ifType, ":"); idx != -1 {
-			ifType = ifType[idx+1:]
+		iface.Type = stripNamespace(ifType)
+	}
+}
+
+func (e *InterfacesExporter) parseEthernet(iface *model.Interface, eth map[string]interface{}) {
+	ethConfig := &model.EthernetConfig{}
+	hasConfig := false
+
+	// Check config block
+	if config, ok := eth["config"].(map[string]interface{}); ok {
+		if speed, ok := config["port-speed"].(string); ok && speed != "SPEED_UNKNOWN" {
+			ethConfig.PortSpeed = stripNamespace(speed)
+			hasConfig = true
 		}
-		iface.Type = ifType
+
+		if autoNeg, ok := config["auto-negotiate"].(bool); ok {
+			ethConfig.AutoNegotiate = &autoNeg
+			hasConfig = true
+		}
+
+		if mac, ok := config["mac-address"].(string); ok && mac != "00:00:00:00:00:00" {
+			ethConfig.MacAddress = mac
+			hasConfig = true
+		}
+	}
+
+	// Check state for operational values if config missing
+	if state, ok := eth["state"].(map[string]interface{}); ok {
+		if ethConfig.PortSpeed == "" {
+			if speed, ok := state["port-speed"].(string); ok && speed != "SPEED_UNKNOWN" {
+				ethConfig.PortSpeed = stripNamespace(speed)
+				hasConfig = true
+			}
+		}
+
+		if duplex, ok := state["duplex-mode"].(string); ok {
+			ethConfig.DuplexMode = duplex
+			hasConfig = true
+		}
+
+		if ethConfig.MacAddress == "" {
+			if mac, ok := state["hw-mac-address"].(string); ok {
+				ethConfig.MacAddress = mac
+				hasConfig = true
+			}
+		}
+	}
+
+	if hasConfig {
+		iface.Ethernet = ethConfig
+	}
+}
+
+func (e *InterfacesExporter) parseAggregation(iface *model.Interface, agg map[string]interface{}) {
+	lagConfig := &model.LAGConfig{}
+	hasConfig := false
+
+	if config, ok := agg["config"].(map[string]interface{}); ok {
+		if lagType, ok := config["lag-type"].(string); ok {
+			lagConfig.LACPMode = stripNamespace(lagType)
+			hasConfig = true
+		}
+	}
+
+	// Check for aggregate-id (member of LAG)
+	if config, ok := agg["config"].(map[string]interface{}); ok {
+		if aggId, ok := config["aggregate-id"].(string); ok {
+			lagConfig.AggregateID = aggId
+			hasConfig = true
+		}
+	}
+
+	if hasConfig {
+		iface.LAG = lagConfig
 	}
 }
 
 func (e *InterfacesExporter) parseSubinterfaces(iface *model.Interface, subints map[string]interface{}) {
-	// Get subinterface list
 	var subintList []interface{}
 
 	if subs, ok := subints["subinterface"].([]interface{}); ok {
@@ -113,7 +202,7 @@ func (e *InterfacesExporter) parseSubinterfaces(iface *model.Interface, subints 
 			continue
 		}
 
-		// Parse IPv4 - check both namespaced and non-namespaced keys
+		// Parse IPv4
 		if ipv4, ok := subData["openconfig-if-ip:ipv4"].(map[string]interface{}); ok {
 			e.parseIPv4(iface, ipv4)
 		} else if ipv4, ok := subData["ipv4"].(map[string]interface{}); ok {
@@ -146,7 +235,6 @@ func (e *InterfacesExporter) parseIPv4(iface *model.Interface, ipv4 map[string]i
 			continue
 		}
 
-		// Get config (preferred) or top-level
 		config, ok := addrData["config"].(map[string]interface{})
 		if !ok {
 			config = addrData

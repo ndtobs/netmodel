@@ -17,7 +17,7 @@ type Exporter interface {
 
 // List returns all available exporter names
 func List() []string {
-	return []string{"interfaces", "bgp", "system"}
+	return []string{"interfaces", "bgp", "system", "routing_policy"}
 }
 
 // Get returns an exporter by name
@@ -29,6 +29,8 @@ func Get(name string) Exporter {
 		return &BGPExporter{}
 	case "system":
 		return &SystemExporter{}
+	case "routing_policy":
+		return &RoutingPolicyExporter{}
 	default:
 		return nil
 	}

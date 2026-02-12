@@ -5,10 +5,11 @@ import "time"
 
 // DeviceModel is the root model for a single device
 type DeviceModel struct {
-	Metadata   Metadata              `yaml:"metadata,omitempty"`
-	Interfaces map[string]*Interface `yaml:"interfaces,omitempty"`
-	BGP        *BGP                  `yaml:"bgp,omitempty"`
-	System     *System               `yaml:"system,omitempty"`
+	Metadata      Metadata              `yaml:"metadata,omitempty"`
+	Interfaces    map[string]*Interface `yaml:"interfaces,omitempty"`
+	BGP           *BGP                  `yaml:"bgp,omitempty"`
+	System        *System               `yaml:"system,omitempty"`
+	RoutingPolicy *RoutingPolicy        `yaml:"routing_policy,omitempty"`
 }
 
 // Metadata contains device identification
@@ -22,14 +23,22 @@ type Metadata struct {
 	NetmodelVersion string    `yaml:"netmodel_version,omitempty"`
 }
 
+// ============================================================================
+// Interfaces
+// ============================================================================
+
 // Interface represents an interface configuration
 type Interface struct {
-	Description string        `yaml:"description,omitempty"`
-	Enabled     *bool         `yaml:"enabled,omitempty"`
-	MTU         int           `yaml:"mtu,omitempty"`
-	Type        string        `yaml:"type,omitempty"`
-	IPv4        *InterfaceIPv4 `yaml:"ipv4,omitempty"`
-	IPv6        *InterfaceIPv6 `yaml:"ipv6,omitempty"`
+	Description string          `yaml:"description,omitempty"`
+	Enabled     *bool           `yaml:"enabled,omitempty"`
+	MTU         int             `yaml:"mtu,omitempty"`
+	Type        string          `yaml:"type,omitempty"`
+	Speed       string          `yaml:"speed,omitempty"`
+	Duplex      string          `yaml:"duplex,omitempty"`
+	IPv4        *InterfaceIPv4  `yaml:"ipv4,omitempty"`
+	IPv6        *InterfaceIPv6  `yaml:"ipv6,omitempty"`
+	Ethernet    *EthernetConfig `yaml:"ethernet,omitempty"`
+	LAG         *LAGConfig      `yaml:"lag,omitempty"`
 }
 
 // InterfaceIPv4 represents IPv4 configuration on an interface
@@ -54,9 +63,27 @@ type IPv6Address struct {
 	PrefixLength int    `yaml:"prefix_length"`
 }
 
+// EthernetConfig represents ethernet-specific configuration
+type EthernetConfig struct {
+	PortSpeed    string `yaml:"port_speed,omitempty"`
+	AutoNegotiate *bool  `yaml:"auto_negotiate,omitempty"`
+	DuplexMode   string `yaml:"duplex_mode,omitempty"`
+	MacAddress   string `yaml:"mac_address,omitempty"`
+}
+
+// LAGConfig represents LAG/port-channel membership
+type LAGConfig struct {
+	AggregateID string `yaml:"aggregate_id,omitempty"`
+	LACPMode    string `yaml:"lacp_mode,omitempty"` // ACTIVE, PASSIVE
+}
+
+// ============================================================================
+// BGP
+// ============================================================================
+
 // BGP represents the BGP configuration
 type BGP struct {
-	Global     BGPGlobal              `yaml:"global,omitempty"`
+	Global     BGPGlobal                `yaml:"global,omitempty"`
 	PeerGroups map[string]*BGPPeerGroup `yaml:"peer_groups,omitempty"`
 	Neighbors  map[string]*BGPNeighbor  `yaml:"neighbors,omitempty"`
 }
@@ -69,18 +96,56 @@ type BGPGlobal struct {
 
 // BGPPeerGroup represents a BGP peer group
 type BGPPeerGroup struct {
-	Description string `yaml:"description,omitempty"`
-	PeerAS      uint32 `yaml:"peer_as,omitempty"`
+	Description    string       `yaml:"description,omitempty"`
+	PeerAS         uint32       `yaml:"peer_as,omitempty"`
+	LocalAS        uint32       `yaml:"local_as,omitempty"`
+	PeerType       string       `yaml:"peer_type,omitempty"` // INTERNAL, EXTERNAL
+	UpdateSource   string       `yaml:"update_source,omitempty"`
+	NextHopSelf    *bool        `yaml:"next_hop_self,omitempty"`
+	SendCommunity  string       `yaml:"send_community,omitempty"` // STANDARD, EXTENDED, BOTH, NONE
+	AFI            []BGPAfiSafi `yaml:"afi_safi,omitempty"`
+	Timers         *BGPTimers   `yaml:"timers,omitempty"`
+	EBGPMultihop   int          `yaml:"ebgp_multihop,omitempty"`
+	RouteReflector *bool        `yaml:"route_reflector_client,omitempty"`
 }
 
 // BGPNeighbor represents a BGP neighbor
 type BGPNeighbor struct {
-	Description string `yaml:"description,omitempty"`
-	Enabled     *bool  `yaml:"enabled,omitempty"`
-	PeerAS      uint32 `yaml:"peer_as,omitempty"`
-	PeerGroup   string `yaml:"peer_group,omitempty"`
-	LocalAS     uint32 `yaml:"local_as,omitempty"`
+	Description    string       `yaml:"description,omitempty"`
+	Enabled        *bool        `yaml:"enabled,omitempty"`
+	PeerAS         uint32       `yaml:"peer_as,omitempty"`
+	PeerGroup      string       `yaml:"peer_group,omitempty"`
+	LocalAS        uint32       `yaml:"local_as,omitempty"`
+	PeerType       string       `yaml:"peer_type,omitempty"` // INTERNAL, EXTERNAL
+	UpdateSource   string       `yaml:"update_source,omitempty"`
+	NextHopSelf    *bool        `yaml:"next_hop_self,omitempty"`
+	SendCommunity  string       `yaml:"send_community,omitempty"`
+	AFI            []BGPAfiSafi `yaml:"afi_safi,omitempty"`
+	Timers         *BGPTimers   `yaml:"timers,omitempty"`
+	EBGPMultihop   int          `yaml:"ebgp_multihop,omitempty"`
+	ImportPolicy   string       `yaml:"import_policy,omitempty"`
+	ExportPolicy   string       `yaml:"export_policy,omitempty"`
+	RouteReflector *bool        `yaml:"route_reflector_client,omitempty"`
 }
+
+// BGPAfiSafi represents address family configuration
+type BGPAfiSafi struct {
+	Name         string `yaml:"name"` // IPV4_UNICAST, IPV6_UNICAST, L2VPN_EVPN, etc.
+	Enabled      *bool  `yaml:"enabled,omitempty"`
+	ImportPolicy string `yaml:"import_policy,omitempty"`
+	ExportPolicy string `yaml:"export_policy,omitempty"`
+}
+
+// BGPTimers represents BGP timer configuration
+type BGPTimers struct {
+	HoldTime      int `yaml:"hold_time,omitempty"`
+	KeepaliveTime int `yaml:"keepalive_time,omitempty"`
+	ConnectRetry  int `yaml:"connect_retry,omitempty"`
+}
+
+// ============================================================================
+// System
+// ============================================================================
 
 // System represents system-level configuration
 type System struct {
@@ -88,12 +153,14 @@ type System struct {
 	DomainName string   `yaml:"domain_name,omitempty"`
 	NTP        *NTP     `yaml:"ntp,omitempty"`
 	DNS        *DNS     `yaml:"dns,omitempty"`
+	AAA        *AAA     `yaml:"aaa,omitempty"`
+	Logging    *Logging `yaml:"logging,omitempty"`
 }
 
 // NTP represents NTP configuration
 type NTP struct {
-	Enabled bool         `yaml:"enabled,omitempty"`
-	Servers []NTPServer  `yaml:"servers,omitempty"`
+	Enabled bool        `yaml:"enabled,omitempty"`
+	Servers []NTPServer `yaml:"servers,omitempty"`
 }
 
 // NTPServer represents an NTP server
@@ -106,4 +173,103 @@ type NTPServer struct {
 type DNS struct {
 	Servers []string `yaml:"servers,omitempty"`
 	Search  []string `yaml:"search,omitempty"`
+}
+
+// AAA represents authentication/authorization config
+type AAA struct {
+	Users []User `yaml:"users,omitempty"`
+}
+
+// User represents a local user account
+type User struct {
+	Username string `yaml:"username"`
+	Role     string `yaml:"role,omitempty"`
+	SSHKey   string `yaml:"ssh_key,omitempty"`
+}
+
+// Logging represents syslog/logging configuration
+type Logging struct {
+	Servers []LogServer `yaml:"servers,omitempty"`
+}
+
+// LogServer represents a syslog server
+type LogServer struct {
+	Address  string `yaml:"address"`
+	Port     int    `yaml:"port,omitempty"`
+	Protocol string `yaml:"protocol,omitempty"` // UDP, TCP
+	Facility string `yaml:"facility,omitempty"`
+}
+
+// ============================================================================
+// Routing Policy
+// ============================================================================
+
+// RoutingPolicy represents routing policy configuration
+type RoutingPolicy struct {
+	DefinedSets       *DefinedSets       `yaml:"defined_sets,omitempty"`
+	PolicyDefinitions []PolicyDefinition `yaml:"policy_definitions,omitempty"`
+}
+
+// DefinedSets contains prefix-sets, community-sets, as-path-sets
+type DefinedSets struct {
+	PrefixSets    []PrefixSet    `yaml:"prefix_sets,omitempty"`
+	CommunitySets []CommunitySet `yaml:"community_sets,omitempty"`
+	ASPathSets    []ASPathSet    `yaml:"as_path_sets,omitempty"`
+}
+
+// PrefixSet represents a prefix-list
+type PrefixSet struct {
+	Name     string   `yaml:"name"`
+	Mode     string   `yaml:"mode,omitempty"` // IPV4, IPV6
+	Prefixes []Prefix `yaml:"prefixes,omitempty"`
+}
+
+// Prefix represents a single prefix entry
+type Prefix struct {
+	Prefix          string `yaml:"prefix"`
+	MaskLengthRange string `yaml:"mask_range,omitempty"` // e.g., "24..32"
+}
+
+// CommunitySet represents a community-list
+type CommunitySet struct {
+	Name    string   `yaml:"name"`
+	Members []string `yaml:"members,omitempty"`
+}
+
+// ASPathSet represents an as-path-list
+type ASPathSet struct {
+	Name    string   `yaml:"name"`
+	Members []string `yaml:"members,omitempty"`
+}
+
+// PolicyDefinition represents a route-map
+type PolicyDefinition struct {
+	Name       string            `yaml:"name"`
+	Statements []PolicyStatement `yaml:"statements,omitempty"`
+}
+
+// PolicyStatement represents a route-map entry/sequence
+type PolicyStatement struct {
+	Name       string           `yaml:"name"` // sequence number or name
+	Conditions *PolicyConditions `yaml:"conditions,omitempty"`
+	Actions    *PolicyActions    `yaml:"actions,omitempty"`
+}
+
+// PolicyConditions represents match conditions
+type PolicyConditions struct {
+	MatchPrefixSet    string `yaml:"match_prefix_set,omitempty"`
+	MatchCommunitySet string `yaml:"match_community_set,omitempty"`
+	MatchASPathSet    string `yaml:"match_as_path_set,omitempty"`
+	MatchNextHop      string `yaml:"match_next_hop,omitempty"`
+}
+
+// PolicyActions represents route-map actions
+type PolicyActions struct {
+	Accept        *bool  `yaml:"accept,omitempty"`
+	Reject        *bool  `yaml:"reject,omitempty"`
+	SetLocalPref  int    `yaml:"set_local_pref,omitempty"`
+	SetMED        int    `yaml:"set_med,omitempty"`
+	SetNextHop    string `yaml:"set_next_hop,omitempty"`
+	SetCommunity  string `yaml:"set_community,omitempty"`
+	SetASPathPrepend string `yaml:"set_as_path_prepend,omitempty"`
 }
