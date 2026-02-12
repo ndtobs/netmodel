@@ -41,54 +41,85 @@ netmodel export 10.0.0.1:6030 --features interfaces,bgp -o spine1.yaml
 Export from all devices in a group:
 
 ```bash
-netmodel export @spine -i inventory.yaml -o ./network-model/
+netmodel export @all -i inventory.yaml -o ./network-model/
+```
+
+Export with Ansible structure:
+
+```bash
+netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible
 ```
 
 ## Output Format
 
-```yaml
-metadata:
-  hostname: spine1
-  version: 4.28.0F
-  exported_at: 2026-02-12T13:00:00Z
-  netmodel_version: 0.1.0
+### Default (Flat Structure)
 
+```
+network-model/
+├── spine1/
+│   ├── metadata.yaml
+│   ├── interfaces.yaml
+│   ├── bgp.yaml
+│   └── system.yaml
+└── leaf1/
+    └── ...
+```
+
+### Ansible Structure (`--structure ansible`)
+
+```
+network-model/
+├── group_vars/
+│   └── all.yaml          # common variables (v0.2+)
+└── host_vars/
+    ├── spine1/
+    │   ├── metadata.yaml
+    │   ├── interfaces.yaml
+    │   ├── bgp.yaml
+    │   └── system.yaml
+    └── leaf1/
+        └── ...
+```
+
+### Example Output
+
+```yaml
+# metadata.yaml
+hostname: spine1
+version: 4.28.0F
+exported_at: 2026-02-12T13:00:00Z
+netmodel_version: 0.1.0
+
+# interfaces.yaml
 interfaces:
   Ethernet1:
     description: "Uplink to leaf1"
-    enabled: true
-    mtu: 9214
+    type: ethernetCsmacd
     ipv4:
       addresses:
         - ip: 10.0.0.0
           prefix_length: 31
 
   Loopback0:
-    description: "Router ID"
-    enabled: true
+    type: softwareLoopback
     ipv4:
       addresses:
         - ip: 10.255.0.1
           prefix_length: 32
 
+# bgp.yaml
 bgp:
   global:
     as: 65001
     router_id: 10.255.0.1
   neighbors:
     10.0.0.1:
-      description: "leaf1"
-      enabled: true
       peer_as: 65101
 
+# system.yaml
 system:
   hostname: spine1
   domain_name: lab.local
-  ntp:
-    enabled: true
-    servers:
-      - address: 10.0.0.250
-        prefer: true
 ```
 
 ## Features
@@ -113,11 +144,11 @@ Use an inventory file to organize devices into groups:
 # inventory.yaml
 groups:
   spine:
-    - 10.0.0.1:6030
-    - 10.0.0.2:6030
+    - spine1:6030
+    - spine2:6030
   leaf:
-    - 10.0.0.11:6030
-    - 10.0.0.12:6030
+    - leaf1:6030
+    - leaf2:6030
   all:
     - "@spine"
     - "@leaf"
@@ -134,50 +165,48 @@ Then export by group:
 netmodel export @spine -i inventory.yaml -o ./network-model/
 ```
 
-## Output Options
-
-```bash
-# Single file
-netmodel export 10.0.0.1:6030 -o spine1.yaml
-
-# Directory (one file per device)
-netmodel export @all -i inventory.yaml -o ./network-model/
-
-# Split mode (per-feature files)
-netmodel export @all -i inventory.yaml -o ./network-model/ --split
-```
-
-Split mode creates:
+## CLI Reference
 
 ```
-network-model/
-├── spine1/
-│   ├── metadata.yaml
-│   ├── interfaces.yaml
-│   ├── bgp.yaml
-│   └── system.yaml
-└── spine2/
-    └── ...
+netmodel export <target> [flags]
+
+Flags:
+  -u, --username string    gNMI username
+  -P, --password string    gNMI password
+  -k, --insecure           skip TLS verification
+  -f, --features strings   features to export (default: all)
+  -o, --output string      output path (file or directory)
+  -i, --inventory string   inventory file for @group targets
+  -s, --structure string   output structure: flat, ansible (default: flat)
+      --no-split           single file per device (default: split per-feature)
+  -t, --timeout duration   gNMI timeout (default: 30s)
 ```
 
 ## Ansible Integration
 
-Use the exported YAML as Ansible vars:
+With `--structure ansible`, output is ready for Ansible:
 
 ```yaml
 # playbook.yaml
 - hosts: network
-  vars_files:
-    - "network-model/{{ inventory_hostname }}.yaml"
   tasks:
     - name: Configure interfaces
-      arista.eos.eos_interfaces:
+      arista.eos.eos_l3_interfaces:
         config: "{{ interfaces | dict2items | map(attribute='value') | list }}"
 ```
 
+Variables from `host_vars/<hostname>/` are automatically loaded by Ansible.
+
+## Roadmap
+
+- [x] v0.1: Core export functionality
+- [ ] v0.2: Config deduplication (extract common config to group_vars)
+- [ ] v0.3: Diff command (compare live vs model)
+- [ ] v0.4: Additional features (OSPF, VLANs, LLDP)
+
 ## Related Tools
 
-- **[netsert](https://github.com/ndtobs/netsert)** — Validate network state against assertions (pairs with netmodel)
+- **[netsert](https://github.com/ndtobs/netsert)** — Validate network state against assertions
 - **netmodel** generates the data model, **netsert** validates it matches reality
 
 ## License

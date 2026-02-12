@@ -1,10 +1,17 @@
 # Binaries
-netmodel
+/netmodel
 *.exe
 
 # Output files
 network-model/
-*.yaml
+spine*.yaml
+leaf*.yaml
+
+# Inventory (user-specific)
+inventory.yaml
+inventory.yml
+
+# Keep examples
 !examples/*.yaml
 
 # IDE

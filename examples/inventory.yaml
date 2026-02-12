@@ -5,12 +5,12 @@
 
 groups:
   spine:
-    - clab-lab-spine1:6030
-    - clab-lab-spine2:6030
+    - spine1:6030
+    - spine2:6030
 
   leaf:
-    - clab-lab-leaf1:6030
-    - clab-lab-leaf2:6030
+    - leaf1:6030
+    - leaf2:6030
 
   all:
     - "@spine"
