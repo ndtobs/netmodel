@@ -9,6 +9,7 @@ type DeviceModel struct {
 	Interfaces    map[string]*Interface `yaml:"interfaces,omitempty"`
 	BGP           *BGP                  `yaml:"bgp,omitempty"`
 	OSPF          *OSPF                 `yaml:"ospf,omitempty"`
+	EVPN          *EVPN                 `yaml:"evpn,omitempty"`
 	System        *System               `yaml:"system,omitempty"`
 	RoutingPolicy *RoutingPolicy        `yaml:"routing_policy,omitempty"`
 }
@@ -231,6 +232,37 @@ type OSPFInterface struct {
 	Priority    int    `yaml:"priority,omitempty"`
 	HelloInterval int  `yaml:"hello_interval,omitempty"`
 	DeadInterval  int  `yaml:"dead_interval,omitempty"`
+}
+
+// ============================================================================
+// EVPN / VXLAN
+// ============================================================================
+
+// EVPN represents EVPN/VXLAN configuration
+type EVPN struct {
+	VTEPSource string               `yaml:"vtep_source,omitempty"` // Source interface for VTEP
+	UDPPort    int                  `yaml:"udp_port,omitempty"`    // VXLAN UDP port (default 4789)
+	VLANVNIs   map[string]*VLANVNI  `yaml:"vlan_vnis,omitempty"`   // VLAN to VNI mappings
+	VRFVNIs    map[string]*VRFVNI   `yaml:"vrf_vnis,omitempty"`    // VRF L3VNI mappings
+}
+
+// VLANVNI represents a VLAN to VNI mapping (L2VNI)
+type VLANVNI struct {
+	VLAN            int      `yaml:"vlan"`
+	VNI             int      `yaml:"vni"`
+	RD              string   `yaml:"rd,omitempty"`
+	RouteTargetBoth []string `yaml:"route_target_both,omitempty"`
+	RouteTargetImport []string `yaml:"route_target_import,omitempty"`
+	RouteTargetExport []string `yaml:"route_target_export,omitempty"`
+}
+
+// VRFVNI represents a VRF to L3VNI mapping
+type VRFVNI struct {
+	VRF               string   `yaml:"vrf"`
+	VNI               int      `yaml:"vni"`
+	RD                string   `yaml:"rd,omitempty"`
+	RouteTargetImport []string `yaml:"route_target_import,omitempty"`
+	RouteTargetExport []string `yaml:"route_target_export,omitempty"`
 }
 
 // ============================================================================
