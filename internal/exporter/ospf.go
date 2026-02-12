@@ -2,7 +2,6 @@ package exporter
 
 import (
 	"context"
-	"strings"
 
 	"github.com/ndtobs/netmodel/internal/gnmi"
 	"github.com/ndtobs/netmodel/internal/model"
@@ -23,19 +22,29 @@ func (e *OSPFExporter) Export(ctx context.Context, client *gnmi.Client) error {
 		Areas:  make(map[string]*model.OSPFArea),
 	}
 
-	// Get OSPF config
-	ospfData, err := client.GetJSON(ctx, "/network-instances/network-instance[name=default]/protocols/protocol[identifier=OSPF][name=OSPF]/ospf")
-	if err != nil {
-		// OSPF not configured - that's fine
-		if strings.Contains(err.Error(), "NotFound") ||
-			strings.Contains(err.Error(), "not found") ||
-			strings.Contains(err.Error(), "InvalidArgument") {
-			return nil
+	// Try common OSPF process names: "1", "OSPF", etc.
+	// Arista uses process ID as name (e.g., "1"), others might use "OSPF"
+	processNames := []string{"1", "OSPF", "default"}
+	
+	var ospfData map[string]interface{}
+	var err error
+	
+	for _, name := range processNames {
+		// Try ospfv2 first (OpenConfig standard for OSPFv2)
+		ospfData, err = client.GetJSON(ctx, "/network-instances/network-instance[name=default]/protocols/protocol[identifier=OSPF][name="+name+"]/ospfv2")
+		if err == nil && ospfData != nil {
+			break
 		}
-		return err
+		
+		// Fall back to ospf
+		ospfData, err = client.GetJSON(ctx, "/network-instances/network-instance[name=default]/protocols/protocol[identifier=OSPF][name="+name+"]/ospf")
+		if err == nil && ospfData != nil {
+			break
+		}
 	}
 
 	if ospfData == nil {
+		// OSPF not configured - that's fine
 		return nil
 	}
 
