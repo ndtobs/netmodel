@@ -22,6 +22,7 @@ func (e *SystemExporter) Export(ctx context.Context, client *gnmi.Client) error 
 	e.metadata = &model.Metadata{}
 
 	// Get system config (hostname, domain-name)
+	// Arista returns: {"openconfig-system:hostname": "spine1"}
 	configData, err := client.GetJSON(ctx, "/system/config")
 	if err == nil && configData != nil {
 		e.parseConfig(configData)
@@ -49,47 +50,54 @@ func (e *SystemExporter) Export(ctx context.Context, client *gnmi.Client) error 
 }
 
 func (e *SystemExporter) parseConfig(data map[string]interface{}) {
-	config := data
-	if cfg, ok := data["openconfig-system:config"].(map[string]interface{}); ok {
-		config = cfg
-	}
-
-	if hostname, ok := config["hostname"].(string); ok {
+	// Handle namespaced keys from Arista: {"openconfig-system:hostname": "spine1"}
+	if hostname, ok := data["openconfig-system:hostname"].(string); ok {
+		e.system.Hostname = hostname
+		e.metadata.Hostname = hostname
+	} else if hostname, ok := data["hostname"].(string); ok {
 		e.system.Hostname = hostname
 		e.metadata.Hostname = hostname
 	}
 
-	if domain, ok := config["domain-name"].(string); ok {
+	if domain, ok := data["openconfig-system:domain-name"].(string); ok {
+		e.system.DomainName = domain
+	} else if domain, ok := data["domain-name"].(string); ok {
 		e.system.DomainName = domain
 	}
 }
 
 func (e *SystemExporter) parseState(data map[string]interface{}) {
+	// Handle namespaced keys
 	state := data
-	if st, ok := data["openconfig-system:state"].(map[string]interface{}); ok {
-		state = st
-	}
 
-	if hostname, ok := state["hostname"].(string); ok {
+	if hostname, ok := state["openconfig-system:hostname"].(string); ok {
 		if e.metadata.Hostname == "" {
 			e.metadata.Hostname = hostname
 		}
-		if e.system.Hostname == "" {
-			e.system.Hostname = hostname
+	} else if hostname, ok := state["hostname"].(string); ok {
+		if e.metadata.Hostname == "" {
+			e.metadata.Hostname = hostname
 		}
 	}
 
 	// Software version
-	if version, ok := state["software-version"].(string); ok {
+	if version, ok := state["openconfig-system:software-version"].(string); ok {
+		e.metadata.Version = version
+	} else if version, ok := state["software-version"].(string); ok {
 		e.metadata.Version = version
 	}
 
-	// Hardware info might be in different places
-	if model, ok := state["hardware-model"].(string); ok {
+	// Hardware model
+	if model, ok := state["openconfig-system:hardware-model"].(string); ok {
+		e.metadata.Model = model
+	} else if model, ok := state["hardware-model"].(string); ok {
 		e.metadata.Model = model
 	}
 
-	if serial, ok := state["serial-number"].(string); ok {
+	// Serial number
+	if serial, ok := state["openconfig-system:serial-number"].(string); ok {
+		e.metadata.Serial = serial
+	} else if serial, ok := state["serial-number"].(string); ok {
 		e.metadata.Serial = serial
 	}
 }
@@ -99,7 +107,9 @@ func (e *SystemExporter) parseNTP(data map[string]interface{}) {
 
 	// Check for config
 	config := data
-	if cfg, ok := data["config"].(map[string]interface{}); ok {
+	if cfg, ok := data["openconfig-system:config"].(map[string]interface{}); ok {
+		config = cfg
+	} else if cfg, ok := data["config"].(map[string]interface{}); ok {
 		config = cfg
 	}
 
@@ -108,9 +118,9 @@ func (e *SystemExporter) parseNTP(data map[string]interface{}) {
 	}
 
 	// Parse servers
-	if servers, ok := data["servers"].(map[string]interface{}); ok {
+	if servers, ok := data["openconfig-system:servers"].(map[string]interface{}); ok {
 		e.parseNTPServers(ntp, servers)
-	} else if servers, ok := data["openconfig-system:servers"].(map[string]interface{}); ok {
+	} else if servers, ok := data["servers"].(map[string]interface{}); ok {
 		e.parseNTPServers(ntp, servers)
 	}
 
@@ -159,19 +169,24 @@ func (e *SystemExporter) parseDNS(data map[string]interface{}) {
 	dns := &model.DNS{}
 
 	// Parse servers
-	if servers, ok := data["servers"].(map[string]interface{}); ok {
+	if servers, ok := data["openconfig-system:servers"].(map[string]interface{}); ok {
 		e.parseDNSServers(dns, servers)
-	} else if servers, ok := data["openconfig-system:servers"].(map[string]interface{}); ok {
+	} else if servers, ok := data["servers"].(map[string]interface{}); ok {
 		e.parseDNSServers(dns, servers)
 	}
 
 	// Parse search domains
-	if config, ok := data["config"].(map[string]interface{}); ok {
-		if search, ok := config["search"].([]interface{}); ok {
-			for _, s := range search {
-				if str, ok := s.(string); ok {
-					dns.Search = append(dns.Search, str)
-				}
+	config := data
+	if cfg, ok := data["openconfig-system:config"].(map[string]interface{}); ok {
+		config = cfg
+	} else if cfg, ok := data["config"].(map[string]interface{}); ok {
+		config = cfg
+	}
+
+	if search, ok := config["search"].([]interface{}); ok {
+		for _, s := range search {
+			if str, ok := s.(string); ok {
+				dns.Search = append(dns.Search, str)
 			}
 		}
 	}

@@ -2,7 +2,6 @@ package exporter
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/ndtobs/netmodel/internal/gnmi"
@@ -21,8 +20,8 @@ func (e *InterfacesExporter) Name() string {
 func (e *InterfacesExporter) Export(ctx context.Context, client *gnmi.Client) error {
 	e.interfaces = make(map[string]*model.Interface)
 
-	// Get all interfaces config
-	data, err := client.GetJSON(ctx, "/interfaces/interface/config")
+	// Get all interfaces - Arista returns at /interfaces
+	data, err := client.GetJSON(ctx, "/interfaces")
 	if err != nil {
 		return err
 	}
@@ -31,81 +30,54 @@ func (e *InterfacesExporter) Export(ctx context.Context, client *gnmi.Client) er
 		return nil
 	}
 
-	// Parse the response - handle both single interface and array
-	if err := e.parseInterfacesConfig(data); err != nil {
-		return err
-	}
-
-	// Get subinterfaces for IP addresses
-	subintData, err := client.GetJSON(ctx, "/interfaces/interface/subinterfaces")
-	if err == nil && subintData != nil {
-		e.parseSubinterfaces(subintData)
-	}
+	// Parse the interface list
+	e.parseInterfaces(data)
 
 	return nil
 }
 
-func (e *InterfacesExporter) parseInterfacesConfig(data map[string]interface{}) error {
-	// The response structure varies by vendor
-	// Try to handle common patterns
+func (e *InterfacesExporter) parseInterfaces(data map[string]interface{}) {
+	// Arista returns: {"openconfig-interfaces:interface": [...]}
+	var interfaceList []interface{}
 
-	// Check for "openconfig-interfaces:interface" (list)
-	if ifaces, ok := data["openconfig-interfaces:interface"]; ok {
-		return e.parseInterfaceList(ifaces)
+	if ifaces, ok := data["openconfig-interfaces:interface"].([]interface{}); ok {
+		interfaceList = ifaces
+	} else if ifaces, ok := data["interface"].([]interface{}); ok {
+		interfaceList = ifaces
 	}
 
-	// Check for "interface" (list)
-	if ifaces, ok := data["interface"]; ok {
-		return e.parseInterfaceList(ifaces)
-	}
-
-	// Maybe it's a direct config response
-	if name, ok := data["name"].(string); ok {
-		e.parseInterfaceConfig(name, data)
-		return nil
-	}
-
-	return nil
-}
-
-func (e *InterfacesExporter) parseInterfaceList(ifaces interface{}) error {
-	list, ok := ifaces.([]interface{})
-	if !ok {
-		return nil
-	}
-
-	for _, item := range list {
+	for _, item := range interfaceList {
 		ifaceData, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
 
+		// Get interface name
 		name, _ := ifaceData["name"].(string)
 		if name == "" {
 			continue
 		}
 
-		// Get config sub-object
-		config, ok := ifaceData["config"].(map[string]interface{})
-		if ok {
-			e.parseInterfaceConfig(name, config)
-		} else {
-			// Config might be at top level
-			e.parseInterfaceConfig(name, ifaceData)
+		iface := &model.Interface{}
+
+		// Parse config block
+		if config, ok := ifaceData["config"].(map[string]interface{}); ok {
+			e.parseConfig(iface, config)
 		}
 
-		// Parse subinterfaces if present
+		// Parse subinterfaces for IP addresses
 		if subints, ok := ifaceData["subinterfaces"].(map[string]interface{}); ok {
-			e.parseInterfaceSubints(name, subints)
+			e.parseSubinterfaces(iface, subints)
+		}
+
+		// Only add if there's meaningful config
+		if iface.Description != "" || iface.Enabled != nil || iface.MTU > 0 || iface.IPv4 != nil || iface.IPv6 != nil {
+			e.interfaces[name] = iface
 		}
 	}
-
-	return nil
 }
 
-func (e *InterfacesExporter) parseInterfaceConfig(name string, config map[string]interface{}) {
-	iface := &model.Interface{}
-
+func (e *InterfacesExporter) parseConfig(iface *model.Interface, config map[string]interface{}) {
 	if desc, ok := config["description"].(string); ok {
 		iface.Description = desc
 	}
@@ -114,75 +86,44 @@ func (e *InterfacesExporter) parseInterfaceConfig(name string, config map[string
 		iface.Enabled = &enabled
 	}
 
-	if mtu, ok := config["mtu"].(float64); ok {
+	if mtu, ok := config["mtu"].(float64); ok && mtu > 0 {
 		iface.MTU = int(mtu)
 	}
 
 	if ifType, ok := config["type"].(string); ok {
-		// Strip namespace prefix
+		// Strip namespace prefix (iana-if-type:ethernetCsmacd -> ethernetCsmacd)
 		if idx := strings.LastIndex(ifType, ":"); idx != -1 {
 			ifType = ifType[idx+1:]
 		}
 		iface.Type = ifType
 	}
-
-	// Only add if there's meaningful config
-	if iface.Description != "" || iface.Enabled != nil || iface.MTU > 0 {
-		e.interfaces[name] = iface
-	}
 }
 
-func (e *InterfacesExporter) parseSubinterfaces(data map[string]interface{}) {
-	// Handle various response structures
-	if ifaces, ok := data["openconfig-interfaces:interface"]; ok {
-		list, ok := ifaces.([]interface{})
-		if !ok {
-			return
-		}
-		for _, item := range list {
-			ifaceData, ok := item.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			name, _ := ifaceData["name"].(string)
-			if subints, ok := ifaceData["subinterfaces"].(map[string]interface{}); ok {
-				e.parseInterfaceSubints(name, subints)
-			}
-		}
-	}
-}
+func (e *InterfacesExporter) parseSubinterfaces(iface *model.Interface, subints map[string]interface{}) {
+	// Get subinterface list
+	var subintList []interface{}
 
-func (e *InterfacesExporter) parseInterfaceSubints(ifaceName string, subints map[string]interface{}) {
-	// Get or create interface
-	iface, ok := e.interfaces[ifaceName]
-	if !ok {
-		iface = &model.Interface{}
-		e.interfaces[ifaceName] = iface
+	if subs, ok := subints["subinterface"].([]interface{}); ok {
+		subintList = subs
 	}
 
-	// Parse subinterface list
-	subintList, ok := subints["subinterface"].([]interface{})
-	if !ok {
-		return
-	}
-
-	for _, subint := range subintList {
-		subintData, ok := subint.(map[string]interface{})
+	for _, sub := range subintList {
+		subData, ok := sub.(map[string]interface{})
 		if !ok {
 			continue
 		}
 
-		// Get IPv4 addresses
-		if ipv4, ok := subintData["openconfig-if-ip:ipv4"].(map[string]interface{}); ok {
+		// Parse IPv4 - check both namespaced and non-namespaced keys
+		if ipv4, ok := subData["openconfig-if-ip:ipv4"].(map[string]interface{}); ok {
 			e.parseIPv4(iface, ipv4)
-		} else if ipv4, ok := subintData["ipv4"].(map[string]interface{}); ok {
+		} else if ipv4, ok := subData["ipv4"].(map[string]interface{}); ok {
 			e.parseIPv4(iface, ipv4)
 		}
 
-		// Get IPv6 addresses
-		if ipv6, ok := subintData["openconfig-if-ip:ipv6"].(map[string]interface{}); ok {
+		// Parse IPv6
+		if ipv6, ok := subData["openconfig-if-ip:ipv6"].(map[string]interface{}); ok {
 			e.parseIPv6(iface, ipv6)
-		} else if ipv6, ok := subintData["ipv6"].(map[string]interface{}); ok {
+		} else if ipv6, ok := subData["ipv6"].(map[string]interface{}); ok {
 			e.parseIPv6(iface, ipv6)
 		}
 	}
@@ -205,9 +146,10 @@ func (e *InterfacesExporter) parseIPv4(iface *model.Interface, ipv4 map[string]i
 			continue
 		}
 
+		// Get config (preferred) or top-level
 		config, ok := addrData["config"].(map[string]interface{})
 		if !ok {
-			config = addrData // Try top level
+			config = addrData
 		}
 
 		ip, _ := config["ip"].(string)
@@ -250,6 +192,11 @@ func (e *InterfacesExporter) parseIPv6(iface *model.Interface, ipv6 map[string]i
 		ip, _ := config["ip"].(string)
 		prefixLen, _ := config["prefix-length"].(float64)
 
+		// Skip link-local addresses
+		if strings.HasPrefix(ip, "fe80:") {
+			continue
+		}
+
 		if ip != "" {
 			if iface.IPv6 == nil {
 				iface.IPv6 = &model.InterfaceIPv6{}
@@ -266,10 +213,4 @@ func (e *InterfacesExporter) Apply(m *model.DeviceModel) {
 	if len(e.interfaces) > 0 {
 		m.Interfaces = e.interfaces
 	}
-}
-
-// Helper for debugging
-func toJSON(v interface{}) string {
-	b, _ := json.MarshalIndent(v, "", "  ")
-	return string(b)
 }
