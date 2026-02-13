@@ -76,6 +76,13 @@ func (e *InterfacesExporter) parseInterfaces(data map[string]interface{}) {
 			e.parseAggregation(iface, agg)
 		}
 
+		// Parse VXLAN config (Arista extension)
+		if vxlan, ok := ifaceData["arista-exp-eos-vxlan:arista-vxlan"].(map[string]interface{}); ok {
+			e.parseVXLAN(iface, vxlan)
+		} else if vxlan, ok := ifaceData["arista-vxlan"].(map[string]interface{}); ok {
+			e.parseVXLAN(iface, vxlan)
+		}
+
 		// Parse subinterfaces for IP addresses
 		if subints, ok := ifaceData["subinterfaces"].(map[string]interface{}); ok {
 			e.parseSubinterfaces(iface, subints)
@@ -95,7 +102,8 @@ func (e *InterfacesExporter) hasMeaningfulConfig(iface *model.Interface) bool {
 		iface.IPv4 != nil ||
 		iface.IPv6 != nil ||
 		iface.Ethernet != nil ||
-		iface.LAG != nil
+		iface.LAG != nil ||
+		iface.VXLAN != nil
 }
 
 func (e *InterfacesExporter) parseConfig(iface *model.Interface, config map[string]interface{}) {
@@ -294,6 +302,64 @@ func (e *InterfacesExporter) parseIPv6(iface *model.Interface, ipv6 map[string]i
 				PrefixLength: int(prefixLen),
 			})
 		}
+	}
+}
+
+func (e *InterfacesExporter) parseVXLAN(iface *model.Interface, vxlan map[string]interface{}) {
+	vxlanConfig := &model.VXLANConfig{}
+	hasConfig := false
+
+	// Parse config block
+	if config, ok := vxlan["config"].(map[string]interface{}); ok {
+		if srcIface, ok := config["source-interface"].(string); ok {
+			vxlanConfig.SourceInterface = srcIface
+			hasConfig = true
+		}
+		if port, ok := config["udp-port"].(float64); ok && port > 0 {
+			vxlanConfig.UDPPort = int(port)
+			hasConfig = true
+		}
+	}
+
+	// Parse VNI mappings from vlan-to-vnis
+	if vlanToVnis, ok := vxlan["vlan-to-vnis"].(map[string]interface{}); ok {
+		if vniList, ok := vlanToVnis["vlan-to-vni"].([]interface{}); ok {
+			for _, item := range vniList {
+				if mapping, ok := item.(map[string]interface{}); ok {
+					vni := 0
+					vlan := 0
+					
+					// Get VNI from config or state
+					if config, ok := mapping["config"].(map[string]interface{}); ok {
+						if v, ok := config["vni"].(float64); ok {
+							vni = int(v)
+						}
+					}
+					if state, ok := mapping["state"].(map[string]interface{}); ok {
+						if v, ok := state["vni"].(float64); ok {
+							vni = int(v)
+						}
+					}
+					
+					// Get VLAN from vlan key
+					if v, ok := mapping["vlan"].(float64); ok {
+						vlan = int(v)
+					}
+					
+					if vni > 0 {
+						vxlanConfig.VNIMappings = append(vxlanConfig.VNIMappings, model.VNIMapping{
+							VNI:  vni,
+							VLAN: vlan,
+						})
+						hasConfig = true
+					}
+				}
+			}
+		}
+	}
+
+	if hasConfig {
+		iface.VXLAN = vxlanConfig
 	}
 }
 

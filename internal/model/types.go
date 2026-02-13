@@ -41,6 +41,7 @@ type Interface struct {
 	IPv6        *InterfaceIPv6  `yaml:"ipv6,omitempty"`
 	Ethernet    *EthernetConfig `yaml:"ethernet,omitempty"`
 	LAG         *LAGConfig      `yaml:"lag,omitempty"`
+	VXLAN       *VXLANConfig    `yaml:"vxlan,omitempty"`
 }
 
 // InterfaceIPv4 represents IPv4 configuration on an interface
@@ -77,6 +78,20 @@ type EthernetConfig struct {
 type LAGConfig struct {
 	AggregateID string `yaml:"aggregate_id,omitempty"`
 	LACPMode    string `yaml:"lacp_mode,omitempty"` // ACTIVE, PASSIVE
+}
+
+// VXLANConfig represents VXLAN tunnel interface configuration
+type VXLANConfig struct {
+	SourceInterface string     `yaml:"source_interface,omitempty"`
+	UDPPort         int        `yaml:"udp_port,omitempty"`
+	VNIMappings     []VNIMapping `yaml:"vni_mappings,omitempty"`
+}
+
+// VNIMapping represents a VNI to VLAN mapping
+type VNIMapping struct {
+	VNI  int `yaml:"vni"`
+	VLAN int `yaml:"vlan,omitempty"`
+	VRF  string `yaml:"vrf,omitempty"`
 }
 
 // ============================================================================
