@@ -28,7 +28,7 @@ netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible
 netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible --dedup
 ```
 
-## Deduplication — The Killer Feature
+## Deduplication
 
 When exporting multiple devices with `--structure ansible --dedup`, netmodel analyzes all configs and extracts common configuration automatically:
 
