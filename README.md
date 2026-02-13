@@ -113,24 +113,24 @@ This follows Ansible best practices — change NTP servers once in `group_vars/a
 
 ## Try It
 
-A test lab is included (requires [containerlab](https://containerlab.dev) and cEOS image):
+Use the [network-labs](https://github.com/ndtobs/network-labs) EVPN topology (requires [containerlab](https://containerlab.dev) + cEOS):
 
 ```bash
-# Deploy lab
-cd examples/lab
+# Clone and deploy lab
+git clone https://github.com/ndtobs/network-labs.git
+cd network-labs/evpn-spine-leaf
 sudo clab deploy -t topology.yaml
 
-# Wait ~60s for boot, then export
-cd ../..
-netmodel export @all -i examples/lab/inventory.yaml -o /tmp/no-dedup --structure ansible
-netmodel export @all -i examples/lab/inventory.yaml -o /tmp/with-dedup --structure ansible --dedup
+# Wait ~90s for boot, then export
+netmodel export @all -i inventory.yaml -o /tmp/no-dedup --structure ansible
+netmodel export @all -i inventory.yaml -o /tmp/with-dedup --structure ansible --dedup
 
-# Compare
+# Compare results
 tree /tmp/no-dedup /tmp/with-dedup
 cat /tmp/with-dedup/group_vars/leaf.yaml
 
 # Cleanup
-cd examples/lab && sudo clab destroy -t topology.yaml
+sudo clab destroy -t topology.yaml
 ```
 
 ## Features
