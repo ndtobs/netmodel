@@ -357,7 +357,51 @@ func stripNamespace(s string) string {
 }
 
 func (e *BGPExporter) Apply(m *model.DeviceModel) {
+	// Clean up redundant neighbor AFIs that are inherited from peer groups
+	e.cleanupInheritedAFI()
+
 	if e.bgp.Global.AS > 0 || len(e.bgp.Neighbors) > 0 || len(e.bgp.PeerGroups) > 0 {
 		m.BGP = e.bgp
 	}
+}
+
+// cleanupInheritedAFI removes AFI-SAFI from neighbors when it matches their peer group
+func (e *BGPExporter) cleanupInheritedAFI() {
+	for _, neighbor := range e.bgp.Neighbors {
+		if neighbor.PeerGroup == "" || len(neighbor.AFI) == 0 {
+			continue
+		}
+
+		// Find the peer group
+		pg, ok := e.bgp.PeerGroups[neighbor.PeerGroup]
+		if !ok || len(pg.AFI) == 0 {
+			continue
+		}
+
+		// Check if neighbor AFI matches peer group AFI
+		if afiListsEqual(neighbor.AFI, pg.AFI) {
+			neighbor.AFI = nil // Remove redundant AFI
+		}
+	}
+}
+
+func afiListsEqual(a, b []model.BGPAfiSafi) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	// Build set from b
+	bSet := make(map[string]bool)
+	for _, afi := range b {
+		bSet[afi.Name] = true
+	}
+
+	// Check all of a are in b
+	for _, afi := range a {
+		if !bSet[afi.Name] {
+			return false
+		}
+	}
+
+	return true
 }
