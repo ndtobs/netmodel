@@ -13,7 +13,17 @@ import (
 // Inventory holds device groups and defaults
 type Inventory struct {
 	Groups   map[string][]string `yaml:"groups"`
+	Hosts    map[string]Host     `yaml:"hosts,omitempty"`
 	Defaults Defaults            `yaml:"defaults,omitempty"`
+}
+
+// Host defines per-host settings
+type Host struct {
+	Address  string `yaml:"address,omitempty"`
+	Port     int    `yaml:"port,omitempty"`
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
+	Insecure *bool  `yaml:"insecure,omitempty"`
 }
 
 // Defaults for all devices in inventory
@@ -198,4 +208,35 @@ func (inv *Inventory) ListGroups() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// ResolveHost returns the full target address for a host (address:port)
+func (inv *Inventory) ResolveHost(name string) string {
+	address := name
+	port := inv.Defaults.Port
+
+	if host, ok := inv.Hosts[name]; ok {
+		if host.Address != "" {
+			address = host.Address
+		}
+		if host.Port != 0 {
+			port = host.Port
+		}
+	}
+
+	// Add port if specified and not already in address
+	if port != 0 && !strings.Contains(address, ":") {
+		return fmt.Sprintf("%s:%d", address, port)
+	}
+
+	return address
+}
+
+// ResolveHosts returns resolved addresses for a list of host names
+func (inv *Inventory) ResolveHosts(names []string) []string {
+	resolved := make([]string, len(names))
+	for i, name := range names {
+		resolved[i] = inv.ResolveHost(name)
+	}
+	return resolved
 }

@@ -13,6 +13,7 @@ inventory.yml
 
 # Keep examples
 !examples/*.yaml
+!examples/**/*.yaml
 
 # IDE
 .idea/

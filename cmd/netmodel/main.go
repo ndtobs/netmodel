@@ -35,6 +35,7 @@ func main() {
 
 	rootCmd.AddCommand(exportCmd())
 	rootCmd.AddCommand(featuresCmd())
+	rootCmd.AddCommand(debugCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -150,15 +151,17 @@ func runExport(target string, features []string, username, password string, inse
 		if len(hosts) == 0 {
 			return fmt.Errorf("group %q is empty", groupName)
 		}
-		targets = hosts
+		// Resolve host names to full addresses (address:port)
+		targets = inv.ResolveHosts(hosts)
 
-		// Build groups map for dedup (all groups from inventory)
+		// Build groups map for dedup (use resolved targets to match models keys)
 		if deduplicate {
 			groups = make(map[string][]string)
 			for _, g := range inv.ListGroups() {
 				if g != "all" { // Skip "all" - that's handled separately
 					if members, ok := inv.GetGroup(g); ok {
-						groups[g] = members
+						// Resolve to full addresses so they match models keys
+						groups[g] = inv.ResolveHosts(members)
 					}
 				}
 			}
@@ -521,14 +524,18 @@ func writeAnsibleStructureDedup(models map[string]*model.DeviceModel, dir string
 		hostnameModels[name] = dm
 	}
 
-	// Convert groups to use hostnames
+	// Convert groups to use hostnames - must use same logic as hostnameModels
 	hostnameGroups := make(map[string][]string)
 	for groupName, targets := range groups {
 		var hostnames []string
 		for _, t := range targets {
-			// Find the hostname for this target
-			if dm, ok := models[t]; ok && dm.Metadata.Hostname != "" {
-				hostnames = append(hostnames, dm.Metadata.Hostname)
+			// Use same logic as hostnameModels above
+			if dm, ok := models[t]; ok {
+				name := dm.Metadata.Hostname
+				if name == "" {
+					name = sanitizeFilename(t)
+				}
+				hostnames = append(hostnames, name)
 			} else {
 				hostnames = append(hostnames, sanitizeFilename(t))
 			}
@@ -695,4 +702,55 @@ func sanitizeFilename(s string) string {
 	s = strings.ReplaceAll(s, ".", "-")
 	s = strings.ReplaceAll(s, "/", "-")
 	return s
+}
+
+func debugCmd() *cobra.Command {
+	var (
+		username string
+		password string
+		insecure bool
+	)
+
+	cmd := &cobra.Command{
+		Use:    "debug <target> <path>",
+		Short:  "Debug gNMI path query",
+		Hidden: true,
+		Args:   cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+
+			client, err := gnmi.NewClient(gnmi.Config{
+				Address:  args[0],
+				Username: username,
+				Password: password,
+				Insecure: insecure,
+				Timeout:  timeout,
+			})
+			if err != nil {
+				return fmt.Errorf("connect: %w", err)
+			}
+			defer client.Close()
+
+			data, err := client.GetJSON(ctx, args[1])
+			if err != nil {
+				return fmt.Errorf("get: %w", err)
+			}
+
+			if data == nil {
+				fmt.Println("(nil response)")
+				return nil
+			}
+
+			out, _ := yaml.Marshal(data)
+			fmt.Println(string(out))
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&username, "username", "u", "", "username")
+	cmd.Flags().StringVarP(&password, "password", "P", "", "password")
+	cmd.Flags().BoolVarP(&insecure, "insecure", "k", false, "skip TLS")
+
+	return cmd
 }

@@ -28,33 +28,109 @@ netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible
 netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible --dedup
 ```
 
-## Example Output
+## Deduplication — The Killer Feature
 
+When exporting multiple devices with `--structure ansible --dedup`, netmodel analyzes all configs and extracts common configuration automatically:
+
+**Before (without --dedup):** Everything duplicated in each host
+
+```
+host_vars/
+├── leaf1/
+│   ├── bgp.yaml         # peer_groups, neighbors, global
+│   ├── system.yaml      # hostname, NTP, DNS, AAA
+│   └── routing_policy.yaml
+├── leaf2/
+│   ├── bgp.yaml         # same peer_groups duplicated!
+│   ├── system.yaml      # same NTP/DNS/AAA duplicated!
+│   └── routing_policy.yaml
+└── ...
+```
+
+**After (with --dedup):** Common config extracted, DRY principle applied
+
+```
+group_vars/
+├── all.yaml             # NTP, DNS, AAA (common to ALL devices)
+├── spine.yaml           # Spine-only peer groups, policies
+└── leaf.yaml            # Leaf-only peer groups, policies
+host_vars/
+├── leaf1/
+│   ├── bgp.yaml         # Just: router_id, neighbors (device-specific)
+│   └── interfaces.yaml
+├── leaf2/
+│   └── ...              # Much smaller!
+```
+
+### Real Example
+
+**group_vars/leaf.yaml** — extracted automatically (identical across all leaves):
 ```yaml
-# interfaces.yaml
-interfaces:
-  Ethernet1:
-    description: "Uplink to leaf1"
-    ipv4:
-      addresses:
-        - ip: 10.0.0.0
-          prefix_length: 31
+bgp:
+  peer_groups:
+    SPINE:
+      peer_as: 65000
+      afi_safi:
+        - name: IPV4_UNICAST
+    SPINE-EVPN:
+      peer_as: 65000
+      update_source: Loopback0
+      ebgp_multihop: 3
+      afi_safi:
+        - name: L2VPN_EVPN
+routing_policy:
+  defined_sets:
+    prefix_sets:
+      - name: LOOPBACKS
+        prefixes:
+          - prefix: 10.255.0.0/16
+            mask_range: 16..32
+system:
+  aaa:
+    users:
+      - username: admin
+        role: network-admin
+```
 
-  Loopback0:
-    type: softwareLoopback
-    ipv4:
-      addresses:
-        - ip: 10.255.0.1
-          prefix_length: 32
-
-# bgp.yaml
+**host_vars/leaf1/bgp.yaml** — only device-specific config remains:
+```yaml
 bgp:
   global:
     as: 65001
-    router_id: 10.255.0.1
+    router_id: 10.255.1.1
   neighbors:
-    10.0.0.1:
-      peer_as: 65101
+    10.0.0.0:
+      peer_group: SPINE
+    10.0.0.4:
+      peer_group: SPINE
+    10.255.0.1:
+      peer_group: SPINE-EVPN
+    10.255.0.2:
+      peer_group: SPINE-EVPN
+```
+
+This follows Ansible best practices — change NTP servers once in `group_vars/all.yaml`, not in 50 host files.
+
+## Try It
+
+A test lab is included (requires [containerlab](https://containerlab.dev) and cEOS image):
+
+```bash
+# Deploy lab
+cd examples/lab
+sudo clab deploy -t topology.yaml
+
+# Wait ~60s for boot, then export
+cd ../..
+netmodel export @all -i examples/lab/inventory.yaml -o /tmp/no-dedup --structure ansible
+netmodel export @all -i examples/lab/inventory.yaml -o /tmp/with-dedup --structure ansible --dedup
+
+# Compare
+tree /tmp/no-dedup /tmp/with-dedup
+cat /tmp/with-dedup/group_vars/leaf.yaml
+
+# Cleanup
+cd examples/lab && sudo clab destroy -t topology.yaml
 ```
 
 ## Features
@@ -66,30 +142,7 @@ bgp:
 | `ospf` | Areas, interfaces, timers |
 | `system` | Hostname, NTP, DNS, AAA/users, syslog |
 | `routing_policy` | Prefix-sets, community-sets, policies |
-
-## Deduplication
-
-When exporting multiple devices with `--structure ansible --dedup`, netmodel analyzes all exported configs and extracts common configuration:
-
-- **`group_vars/all.yaml`** — Config identical across ALL devices (NTP servers, DNS, common peer groups)
-- **`group_vars/<group>.yaml`** — Config identical within inventory groups (spine-specific, leaf-specific)
-- **`host_vars/<device>/`** — Device-specific config only (router-id, neighbors, interfaces)
-
-```
-network-model/
-├── group_vars/
-│   ├── all.yaml        # NTP, DNS, AAA (common to all)
-│   ├── spine.yaml      # Spine peer groups
-│   └── leaf.yaml       # Leaf peer groups
-└── host_vars/
-    ├── spine1/
-    │   ├── bgp.yaml    # router_id, neighbors
-    │   └── interfaces.yaml
-    └── leaf1/
-        └── ...
-```
-
-This follows Ansible best practices — common config in one place, device-specific overrides where needed.
+| `evpn` | VTEP, VLAN-VNI, VRF-VNI mappings |
 
 ## Documentation
 
