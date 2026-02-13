@@ -23,6 +23,9 @@ netmodel export 10.0.0.1:6030 --features interfaces,bgp -o spine1/
 
 # Export inventory group with Ansible structure
 netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible
+
+# Export with deduplication (extracts common config to group_vars)
+netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible --dedup
 ```
 
 ## Example Output
@@ -63,6 +66,30 @@ bgp:
 | `ospf` | Areas, interfaces, timers |
 | `system` | Hostname, NTP, DNS, AAA/users, syslog |
 | `routing_policy` | Prefix-sets, community-sets, policies |
+
+## Deduplication
+
+When exporting multiple devices with `--structure ansible --dedup`, netmodel analyzes all exported configs and extracts common configuration:
+
+- **`group_vars/all.yaml`** — Config identical across ALL devices (NTP servers, DNS, common peer groups)
+- **`group_vars/<group>.yaml`** — Config identical within inventory groups (spine-specific, leaf-specific)
+- **`host_vars/<device>/`** — Device-specific config only (router-id, neighbors, interfaces)
+
+```
+network-model/
+├── group_vars/
+│   ├── all.yaml        # NTP, DNS, AAA (common to all)
+│   ├── spine.yaml      # Spine peer groups
+│   └── leaf.yaml       # Leaf peer groups
+└── host_vars/
+    ├── spine1/
+    │   ├── bgp.yaml    # router_id, neighbors
+    │   └── interfaces.yaml
+    └── leaf1/
+        └── ...
+```
+
+This follows Ansible best practices — common config in one place, device-specific overrides where needed.
 
 ## Documentation
 

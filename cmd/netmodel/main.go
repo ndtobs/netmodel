@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ndtobs/netmodel/internal/dedup"
 	"github.com/ndtobs/netmodel/internal/exporter"
 	"github.com/ndtobs/netmodel/internal/gnmi"
 	"github.com/ndtobs/netmodel/internal/inventory"
@@ -50,6 +51,7 @@ func exportCmd() *cobra.Command {
 		inventoryFile string
 		noSplit       bool
 		structure     string
+		deduplicate   bool
 	)
 
 	cmd := &cobra.Command{
@@ -66,15 +68,22 @@ Output structures:
   - flat: Per-device directories with feature files (default)
   - ansible: group_vars/host_vars layout for Ansible integration
 
+Deduplication (--dedup):
+  When exporting multiple devices with --structure ansible, extracts common
+  configuration to group_vars. Config identical across ALL devices goes to
+  group_vars/all.yaml. Config identical within inventory groups goes to
+  group_vars/<group>.yaml. Device-specific config stays in host_vars.
+
 Examples:
   netmodel export 10.0.0.1:6030
   netmodel export spine1:6030 --features interfaces,bgp
   netmodel export spine1:6030 -o spine1.yaml
   netmodel export @spine -i inventory.yaml -o ./network-model/
-  netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible`,
+  netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible
+  netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible --dedup`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExport(args[0], features, username, password, insecure, outPath, inventoryFile, !noSplit, structure)
+			return runExport(args[0], features, username, password, insecure, outPath, inventoryFile, !noSplit, structure, deduplicate)
 		},
 	}
 
@@ -86,6 +95,7 @@ Examples:
 	cmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "inventory file for group targets")
 	cmd.Flags().BoolVar(&noSplit, "no-split", false, "single file per device (default: split into per-feature files)")
 	cmd.Flags().StringVarP(&structure, "structure", "s", "flat", "output structure: flat, ansible")
+	cmd.Flags().BoolVar(&deduplicate, "dedup", false, "extract common config to group_vars (requires --structure ansible)")
 
 	return cmd
 }
@@ -103,10 +113,16 @@ func featuresCmd() *cobra.Command {
 	}
 }
 
-func runExport(target string, features []string, username, password string, insecure bool, outPath, inventoryFile string, split bool, structure string) error {
+func runExport(target string, features []string, username, password string, insecure bool, outPath, inventoryFile string, split bool, structure string, deduplicate bool) error {
+	// Validate dedup flag
+	if deduplicate && structure != "ansible" {
+		return fmt.Errorf("--dedup requires --structure ansible")
+	}
+
 	// Load inventory if needed
 	var inv *inventory.Inventory
 	var targets []string
+	var groups map[string][]string // For dedup: maps group name to hostnames
 	var err error
 
 	if strings.HasPrefix(target, "@") {
@@ -135,6 +151,18 @@ func runExport(target string, features []string, username, password string, inse
 			return fmt.Errorf("group %q is empty", groupName)
 		}
 		targets = hosts
+
+		// Build groups map for dedup (all groups from inventory)
+		if deduplicate {
+			groups = make(map[string][]string)
+			for _, g := range inv.ListGroups() {
+				if g != "all" { // Skip "all" - that's handled separately
+					if members, ok := inv.GetGroup(g); ok {
+						groups[g] = members
+					}
+				}
+			}
+		}
 	} else {
 		targets = []string{target}
 	}
@@ -192,7 +220,7 @@ func runExport(target string, features []string, username, password string, inse
 	}
 
 	// Output
-	return writeOutput(models, outPath, split, structure)
+	return writeOutput(models, outPath, split, structure, deduplicate, groups)
 }
 
 func exportDevice(target string, features []string, username, password string, insecure bool) (*model.DeviceModel, error) {
@@ -219,7 +247,7 @@ func exportDevice(target string, features []string, username, password string, i
 	return dm, nil
 }
 
-func writeOutput(models map[string]*model.DeviceModel, outPath string, split bool, structure string) error {
+func writeOutput(models map[string]*model.DeviceModel, outPath string, split bool, structure string, deduplicate bool, groups map[string][]string) error {
 	// If no output path, write to stdout
 	if outPath == "" {
 		return writeToStdout(models)
@@ -228,6 +256,9 @@ func writeOutput(models map[string]*model.DeviceModel, outPath string, split boo
 	// Handle different output structures
 	switch structure {
 	case "ansible":
+		if deduplicate && len(models) > 1 {
+			return writeAnsibleStructureDedup(models, outPath, split, groups)
+		}
 		return writeAnsibleStructure(models, outPath, split)
 	default: // "flat"
 		// Check if output is a directory (ends with / or multiple targets)
@@ -466,6 +497,176 @@ func writeAnsibleStructure(models map[string]*model.DeviceModel, dir string, spl
 	}
 
 	return nil
+}
+
+func writeAnsibleStructureDedup(models map[string]*model.DeviceModel, dir string, split bool, groups map[string][]string) error {
+	// Create directory structure
+	hostVarsDir := filepath.Join(dir, "host_vars")
+	groupVarsDir := filepath.Join(dir, "group_vars")
+
+	if err := os.MkdirAll(hostVarsDir, 0755); err != nil {
+		return fmt.Errorf("create host_vars directory: %w", err)
+	}
+	if err := os.MkdirAll(groupVarsDir, 0755); err != nil {
+		return fmt.Errorf("create group_vars directory: %w", err)
+	}
+
+	// Build hostname-keyed models (dedup uses hostnames)
+	hostnameModels := make(map[string]*model.DeviceModel)
+	for target, dm := range models {
+		name := dm.Metadata.Hostname
+		if name == "" {
+			name = sanitizeFilename(target)
+		}
+		hostnameModels[name] = dm
+	}
+
+	// Convert groups to use hostnames
+	hostnameGroups := make(map[string][]string)
+	for groupName, targets := range groups {
+		var hostnames []string
+		for _, t := range targets {
+			// Find the hostname for this target
+			if dm, ok := models[t]; ok && dm.Metadata.Hostname != "" {
+				hostnames = append(hostnames, dm.Metadata.Hostname)
+			} else {
+				hostnames = append(hostnames, sanitizeFilename(t))
+			}
+		}
+		hostnameGroups[groupName] = hostnames
+	}
+
+	// Run deduplication
+	result := dedup.Deduplicate(hostnameModels, hostnameGroups)
+
+	// Write group_vars/all.yaml (common config)
+	if result.Common != nil && !isEmptyModel(result.Common) {
+		allVarsPath := filepath.Join(groupVarsDir, "all.yaml")
+		if err := writeModelFile(allVarsPath, result.Common, split); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Wrote %s (common config)\n", allVarsPath)
+	}
+
+	// Write group_vars/<group>.yaml for each group with common config
+	for groupName, groupModel := range result.GroupCommon {
+		if groupModel != nil && !isEmptyModel(groupModel) {
+			groupPath := filepath.Join(groupVarsDir, groupName+".yaml")
+			if err := writeModelFile(groupPath, groupModel, false); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "Wrote %s (group common)\n", groupPath)
+		}
+	}
+
+	// Write host_vars/<host>/ for each device (host-specific config only)
+	for hostname, hostModel := range result.HostSpecific {
+		if hostModel == nil || isEmptyModel(hostModel) {
+			fmt.Fprintf(os.Stderr, "Skipped %s (all config in group_vars)\n", hostname)
+			continue
+		}
+
+		if split {
+			deviceDir := filepath.Join(hostVarsDir, hostname)
+			if err := os.MkdirAll(deviceDir, 0755); err != nil {
+				return fmt.Errorf("create device directory: %w", err)
+			}
+
+			if err := writeModelSplit(deviceDir, hostModel); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "Wrote %s/ (host-specific)\n", deviceDir)
+		} else {
+			hostPath := filepath.Join(hostVarsDir, hostname+".yaml")
+			if err := writeModelFile(hostPath, hostModel, false); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "Wrote %s (host-specific)\n", hostPath)
+		}
+	}
+
+	return nil
+}
+
+func writeModelFile(path string, dm *model.DeviceModel, split bool) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	defer f.Close()
+
+	// Build output map with only non-nil fields
+	out := make(map[string]interface{})
+
+	if dm.System != nil {
+		out["system"] = dm.System
+	}
+	if dm.BGP != nil {
+		out["bgp"] = dm.BGP
+	}
+	if dm.Interfaces != nil {
+		out["interfaces"] = dm.Interfaces
+	}
+	if dm.OSPF != nil {
+		out["ospf"] = dm.OSPF
+	}
+	if dm.EVPN != nil {
+		out["evpn"] = dm.EVPN
+	}
+	if dm.RoutingPolicy != nil {
+		out["routing_policy"] = dm.RoutingPolicy
+	}
+
+	return outputYAML(f, out)
+}
+
+func writeModelSplit(dir string, dm *model.DeviceModel) error {
+	// Write metadata if present
+	if dm.Metadata.Hostname != "" || dm.Metadata.Model != "" {
+		if err := writeFeatureFile(dir, "metadata", dm.Metadata); err != nil {
+			return err
+		}
+	}
+
+	if dm.Interfaces != nil {
+		if err := writeFeatureFile(dir, "interfaces", map[string]interface{}{"interfaces": dm.Interfaces}); err != nil {
+			return err
+		}
+	}
+	if dm.BGP != nil {
+		if err := writeFeatureFile(dir, "bgp", map[string]interface{}{"bgp": dm.BGP}); err != nil {
+			return err
+		}
+	}
+	if dm.System != nil {
+		if err := writeFeatureFile(dir, "system", map[string]interface{}{"system": dm.System}); err != nil {
+			return err
+		}
+	}
+	if dm.OSPF != nil {
+		if err := writeFeatureFile(dir, "ospf", map[string]interface{}{"ospf": dm.OSPF}); err != nil {
+			return err
+		}
+	}
+	if dm.EVPN != nil {
+		if err := writeFeatureFile(dir, "evpn", map[string]interface{}{"evpn": dm.EVPN}); err != nil {
+			return err
+		}
+	}
+	if dm.RoutingPolicy != nil {
+		if err := writeFeatureFile(dir, "routing_policy", map[string]interface{}{"routing_policy": dm.RoutingPolicy}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isEmptyModel(dm *model.DeviceModel) bool {
+	if dm == nil {
+		return true
+	}
+	return dm.Interfaces == nil && dm.BGP == nil && dm.OSPF == nil &&
+		dm.EVPN == nil && dm.System == nil && dm.RoutingPolicy == nil
 }
 
 func writeFeatureFile(dir, feature string, data interface{}) error {
