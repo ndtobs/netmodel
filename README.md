@@ -21,16 +21,16 @@ netmodel export 10.0.0.1:6030 -u admin -P password -k
 # Export specific features
 netmodel export 10.0.0.1:6030 --features interfaces,bgp -o spine1/
 
-# Export inventory group with Ansible structure
-netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible
+# Export inventory group (Ansible structure is default)
+netmodel export @all -i inventory.yaml -o ./network-model/
 
 # Export with deduplication (extracts common config to group_vars)
-netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible --dedup
+netmodel export @all -i inventory.yaml -o ./network-model/ --dedup
 ```
 
 ## Deduplication
 
-When exporting multiple devices with `--structure ansible --dedup`, netmodel analyzes all configs and extracts common configuration automatically:
+When exporting multiple devices with `--dedup`, netmodel analyzes all configs and extracts common configuration automatically:
 
 **Before (without --dedup):** Everything duplicated in each host
 
@@ -122,8 +122,8 @@ cd network-labs/evpn-spine-leaf
 sudo clab deploy -t topology.yaml
 
 # Wait ~90s for boot, then export
-netmodel export @all -i inventory.yaml -o /tmp/no-dedup --structure ansible
-netmodel export @all -i inventory.yaml -o /tmp/with-dedup --structure ansible --dedup
+netmodel export @all -i inventory.yaml -o /tmp/no-dedup
+netmodel export @all -i inventory.yaml -o /tmp/with-dedup --dedup
 
 # Compare results
 tree /tmp/no-dedup /tmp/with-dedup

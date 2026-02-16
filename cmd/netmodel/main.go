@@ -66,8 +66,8 @@ Target can be:
   - All devices: @all (requires inventory file)
 
 Output structures:
-  - flat: Per-device directories with feature files (default)
-  - ansible: group_vars/host_vars layout for Ansible integration
+  - ansible: group_vars/host_vars layout for Ansible integration (default)
+  - flat: Per-device directories with feature files
 
 Deduplication (--dedup):
   When exporting multiple devices with --structure ansible, extracts common
@@ -80,8 +80,8 @@ Examples:
   netmodel export spine1:6030 --features interfaces,bgp
   netmodel export spine1:6030 -o spine1.yaml
   netmodel export @spine -i inventory.yaml -o ./network-model/
-  netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible
-  netmodel export @all -i inventory.yaml -o ./network-model/ --structure ansible --dedup`,
+  netmodel export @all -i inventory.yaml -o ./network-model/ --dedup
+  netmodel export @all -i inventory.yaml -o ./network-model/ --structure flat`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExport(args[0], features, username, password, insecure, outPath, inventoryFile, !noSplit, structure, deduplicate)
@@ -95,7 +95,7 @@ Examples:
 	cmd.Flags().StringVarP(&outPath, "output", "o", "", "output path (file or directory)")
 	cmd.Flags().StringVarP(&inventoryFile, "inventory", "i", "", "inventory file for group targets")
 	cmd.Flags().BoolVar(&noSplit, "no-split", false, "single file per device (default: split into per-feature files)")
-	cmd.Flags().StringVarP(&structure, "structure", "s", "flat", "output structure: flat, ansible")
+	cmd.Flags().StringVarP(&structure, "structure", "s", "ansible", "output structure: ansible (default), flat")
 	cmd.Flags().BoolVar(&deduplicate, "dedup", false, "extract common config to group_vars (requires --structure ansible)")
 
 	return cmd
