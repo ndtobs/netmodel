@@ -61,23 +61,37 @@ func (e *SystemExporter) Export(ctx context.Context, client *gnmi.Client) error 
 }
 
 func (e *SystemExporter) parseConfig(data map[string]interface{}) {
-	if hostname, ok := data["openconfig-system:hostname"].(string); ok {
+	// Handle nested config container (Arista returns this structure)
+	config := data
+	if cfg, ok := data["openconfig-system:config"].(map[string]interface{}); ok {
+		config = cfg
+	} else if cfg, ok := data["config"].(map[string]interface{}); ok {
+		config = cfg
+	}
+
+	if hostname, ok := config["openconfig-system:hostname"].(string); ok {
 		e.system.Hostname = hostname
 		e.metadata.Hostname = hostname
-	} else if hostname, ok := data["hostname"].(string); ok {
+	} else if hostname, ok := config["hostname"].(string); ok {
 		e.system.Hostname = hostname
 		e.metadata.Hostname = hostname
 	}
 
-	if domain, ok := data["openconfig-system:domain-name"].(string); ok {
+	if domain, ok := config["openconfig-system:domain-name"].(string); ok {
 		e.system.DomainName = domain
-	} else if domain, ok := data["domain-name"].(string); ok {
+	} else if domain, ok := config["domain-name"].(string); ok {
 		e.system.DomainName = domain
 	}
 }
 
 func (e *SystemExporter) parseState(data map[string]interface{}) {
+	// Handle nested state container
 	state := data
+	if st, ok := data["openconfig-system:state"].(map[string]interface{}); ok {
+		state = st
+	} else if st, ok := data["state"].(map[string]interface{}); ok {
+		state = st
+	}
 
 	if hostname, ok := state["openconfig-system:hostname"].(string); ok {
 		if e.metadata.Hostname == "" {
